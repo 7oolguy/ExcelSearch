@@ -9,7 +9,7 @@ class MainWin:
     def __init__(self) -> None:
         self._root = tk.Tk()
         self._root.title("Search Excel")
-        self._root.geometry("1000x1000")
+        self._root.geometry("700x1000")
 
         self._root.grid_columnconfigure(5, weight=1)
         self._root.grid_rowconfigure(5, weight=1)
@@ -76,7 +76,7 @@ class MainWin:
         # GROUP 3
         self.table_label = ttk.Label(
             self._root,
-            text="Select Table"
+            text="Select T"
         )
         self.table_label.grid(
             row=0,
@@ -134,7 +134,7 @@ class MainWin:
         self.search_btn = tk.Button(
             self._root,
             text="Search",
-            command=self.search_key_word,
+            command= self.search_key_word,
             width=20
         )
         self.search_btn.grid(
@@ -144,7 +144,25 @@ class MainWin:
             columnspan=2,
             padx=px,
             pady=10,
-            sticky="w")
+            sticky="w"
+            )
+
+        self.search_result_count_label = ttk.Label(
+            self._root,
+            text="Row Count:"
+            )
+        self.search_result_count_label.grid(
+            row=0,
+            rowspan=2,
+            column=7,
+            columnspan=2,
+            padx=px,
+            pady=10,
+            sticky='w')
+
+        # VIEW
+        self.table = TableView(self._root, self.excel.get_rows())
+        self.table.create_table_widget()
 
     def select_excel(self):
         self.file_path = filedialog.askopenfilename(
@@ -164,12 +182,8 @@ class MainWin:
         self.update_table_dropdown()
 
     def update_table_dropdown(self):
-        tables = self.excel.get_table_names()
-        if tables:
-            self.table_combo['values'] = tables
-            self.table_combo.current(0)
-        else:
-            self.table_combo.set("No Table Found")
+        # Tables in pandas are not handled like in openpyxl; this is optional or can be removed
+        self.table_combo.set("N/A")
 
     def save_user_data(self):
         data = {
@@ -189,10 +203,140 @@ class MainWin:
     def search_key_word(self):
         value = self.search_entry.get()
         if not value:
-            pass
+            return
         else:
+            # Use the pandas-based search function
             rows = self.excel.get_value_row(value)
-            print(rows)
+            if rows:
+                headers = self.excel.get_header()
+                self.search_result_count_label.config(text=f'Count Row: {len(rows)}')
+                self.table.set_table_data(headers, rows)
+            else:
+                print("No matching rows found.")
 
     def run(self):
         self._root.mainloop()
+
+class TableView:
+    def __init__(self, parent, original_data=None) -> None:
+        self.parent = parent
+        self.tree = None
+        self.headers = []
+        self.data = []
+        self.original_data = original_data or []  # Store full unfiltered data here
+        self.undo_stack = []
+        self.redo_stack = []
+        self.create_table_widget()
+
+    def create_table_widget(self):
+        self.tree = ttk.Treeview(self.parent, columns=self.headers, show='headings', selectmode='browse')
+        self.tree.grid(row=3, column=0, columnspan=7, sticky='ns')
+
+        # Vertical scrollbar
+        scrollbar_y = ttk.Scrollbar(self.parent, orient="vertical", command=self.tree.yview)
+        scrollbar_y.grid(row=3, column=7, sticky='ns')
+        self.tree.configure(yscroll=scrollbar_y.set)
+
+        # Horizontal Scrollbar
+        scrollbar_x = ttk.Scrollbar(self.parent, orient="horizontal", command=self.tree.xview)
+        scrollbar_x.grid(row=4, column=0, columnspan=7, sticky='ew')
+        self.tree.configure(xscroll=scrollbar_x.set)
+
+        self.tree.bind("<ButtonRelease-1>", self.on_click)
+        self.tree.bind("<Double-1>", self.on_double_click)  # Double click
+
+        # Add Go Back and Go Forth buttons
+        self.back_button = tk.Button(self.parent, text="Go Back", command=self.go_back)
+        self.back_button.grid(row=5, column=0, pady=10, padx=10, sticky="ew")
+
+        self.forth_button = tk.Button(self.parent, text="Go Forth", command=self.go_forth)
+        self.forth_button.grid(row=5, column=1, pady=10, padx=10, sticky="ew")
+
+    def set_table_data(self, headers, data):
+        if not headers or not data:
+            print("Error: Headers or data are empty.")
+            return
+
+        if not self.original_data:
+            self.original_data = data.copy()
+
+        self.headers = headers
+        self.data = data
+
+        self.tree.delete(*self.tree.get_children())
+
+        self.tree["columns"] = self.headers
+
+        for col in self.headers:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100, anchor=tk.CENTER)
+
+        for row_data in self.data:
+            self.tree.insert("", "end", values=row_data)
+
+    def on_click(self, event):
+        region = self.tree.identify("region", event.x, event.y)
+        if region == "cell":
+            row_id = self.tree.identify_row(event.y)  # Get the clicked row's ID
+            col_id = self.tree.identify_column(event.x)  # Get the clicked column's ID
+            col_index = int(col_id.replace("#", "")) - 1  # Convert the column ID to an index
+            row_index = self.tree.index(row_id)  # Get the index of the clicked row
+
+            # Get the item from the tree at the clicked row
+            item = self.tree.item(row_id, 'values')
+
+            # Fetch the value in the specific column (cell)
+            cell_value = item[col_index]  # Get the value at the clicked column
+
+            print(f"Cell clicked at Row: {row_index}, Column: {col_index}, Value: {cell_value}")
+
+            # Optionally, return or use the value in some way (for example, display it in a label or entry)
+            return cell_value
+
+    def on_double_click(self, event):
+        """Double-click event handler to filter table data."""
+        region = self.tree.identify("region", event.x, event.y)
+        if region == "cell":
+            row_id = self.tree.identify_row(event.y)  # Get the clicked row's ID
+            col_id = self.tree.identify_column(event.x)  # Get the clicked column's ID
+            col_index = int(col_id.replace("#", "")) - 1  # Convert the column ID to an index
+
+            # Get the item from the tree at the clicked row
+            item = self.tree.item(row_id, 'values')
+            cell_value = item[col_index]  # Get the value at the clicked column
+
+            print(f"Double-clicked value: {cell_value}")
+
+            # Call filter_by_value to filter the table based on this value
+            self.filter_by_value(cell_value)
+
+    def filter_by_value(self, value):
+        """Filter table data to show only rows where the clicked value matches."""
+        filtered_data = [row for row in self.original_data if value in row]  # Adjust the condition as needed for matching
+
+        # Set the filtered data into the table
+        self.set_table_data(self.headers, filtered_data)
+
+    def go_back(self):
+        """Go back to the previous table state."""
+        if self.undo_stack:
+            # Save current state to redo stack before undoing
+            self.redo_stack.append(self.data.copy())
+
+            # Pop the last state from the undo stack
+            last_state = self.undo_stack.pop()
+
+            # Apply the last state
+            self.set_table_data(self.headers, last_state)
+
+    def go_forth(self):
+        """Go forth to the next table state."""
+        if self.redo_stack:
+            # Save current state to undo stack before redoing
+            self.undo_stack.append(self.data.copy())
+
+            # Pop the last state from the redo stack
+            next_state = self.redo_stack.pop()
+
+            # Apply the next state
+            self.set_table_data(self.headers, next_state)
